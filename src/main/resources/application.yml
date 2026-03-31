@@ -19,7 +19,7 @@ spring:
   # 4. Spring AI 配置 (以使用免费的智谱/Kimi/硅基流动API为例)
   ai:
     openai:
-      api-key: sk-mooeawdlthqiciulldcuzkfzvsoglyrpemphivrirbxzqdmw # 面试前去申请一个免费的
+      api-key: sk-
       base-url: https://api.siliconflow.cn # 这里填对应厂商的代理地址
       chat:
         options:
