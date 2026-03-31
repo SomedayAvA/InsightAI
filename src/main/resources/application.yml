@@ -1,0 +1,41 @@
+spring:
+  # 1. 开启 Java 21 虚拟线程 (面试核心亮点!)
+  threads:
+    virtual:
+      enabled: true
+
+  # 2. 数据库配置
+  datasource:
+    url: jdbc:postgresql://localhost:5432/insight_db
+    username: root
+    password: rootpassword
+
+  # 3. Redis 配置
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # 4. Spring AI 配置 (以使用免费的智谱/Kimi/硅基流动API为例)
+  ai:
+    openai:
+      api-key: sk-mooeawdlthqiciulldcuzkfzvsoglyrpemphivrirbxzqdmw # 面试前去申请一个免费的
+      base-url: https://api.siliconflow.cn # 这里填对应厂商的代理地址
+      chat:
+        options:
+          model: tencent/Hunyuan-MT-7B  # 这是一个效果极好的免费开源模型
+      embedding:
+        options:
+          model: BAAI/bge-m3
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024 # 根据你的Embedding模型维度修改
+        initialize-schema: true # 启动时自动建表
+  server:
+    servlet:
+      encoding:
+        charset: UTF-8
+        force: true
+        enabled: true

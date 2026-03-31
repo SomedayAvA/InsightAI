@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>InsightAI 智能知识库平台</title>
+    <style>
+        :root { --primary: #3498db; --success: #27ae60; --bg: #f4f7f6; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; }
+
+        /* 布局控制 */
+        .container { display: flex; width: 100%; max-width: 1400px; margin: auto; height: 90vh; gap: 20px; padding: 20px; }
+        .panel { background: white; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); display: flex; flex-direction: column; overflow: hidden; }
+
+        /* 左侧：知识管理 */
+        .knowledge-side { flex: 1; padding: 25px; border-top: 5px solid var(--success); }
+        textarea { flex: 1; width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 15px; font-size: 14px; resize: none; outline: none; margin: 15px 0; box-sizing: border-box; }
+        textarea:focus { border-color: var(--success); }
+
+        /* 右侧：问答交互 */
+        .chat-side { flex: 1.5; padding: 25px; border-top: 5px solid var(--primary); }
+        .chat-history { flex: 1; background: #f9f9f9; border-radius: 8px; padding: 20px; overflow-y: auto; position: relative; margin-bottom: 20px; border: 1px solid #eee; }
+
+        /* 通用组件 */
+        h2 { margin: 0 0 10px 0; color: #34495e; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+        .input-group { display: flex; gap: 10px; }
+        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
+        button { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; transition: opacity 0.3s; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-ingest { background: var(--success); width: 100%; }
+        .btn-ask { background: var(--primary); }
+
+        #output { line-height: 1.7; color: #2c3e50; white-space: pre-wrap; }
+        .cursor { display: inline-block; width: 3px; height: 18px; background: var(--primary); margin-left: 3px; vertical-align: middle; visibility: hidden; }
+        .blinking { animation: blink 1s step-end infinite; visibility: visible; }
+        @keyframes blink { 50% { opacity: 0; } }
+        .status-msg { font-size: 13px; margin-top: 10px; min-height: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="panel knowledge-side">
+        <h2>📚 录入私有知识</h2>
+        <p style="font-size: 13px; color: #7f8c8d;">输入公司制度、产品文档或个人笔记，将其向量化存入 PG 数据库。</p>
+        <textarea id="knowledgeText" placeholder="例如：InsightAI 公司的加班补贴标准是每小时 50 元，需通过钉钉系统申请。"></textarea>
+        <button class="btn-ingest" id="ingestBtn" onclick="ingestKnowledge()">存入向量数据库</button>
+        <div id="ingestStatus" class="status-msg"></div>
+    </div>
+
+    <div class="panel chat-side">
+        <h2>🤖 智能 RAG 问答</h2>
+        <div class="chat-history" id="chatHistory">
+            <div id="output">等待提问中...</div>
+            <span id="cursor" class="cursor"></span>
+        </div>
+        <div class="input-group">
+            <input type="text" id="questionInput" placeholder="输入问题..." onkeypress="if(event.keyCode==13) askQuestion()">
+            <button class="btn-ask" id="askBtn" onclick="askQuestion()">发送</button>
+        </div>
+        <div id="chatStatus" class="status-msg"></div>
+    </div>
+</div>
+
+<script>
+    // --- 知识录入逻辑 ---
+    async function ingestKnowledge() {
+        const text = document.getElementById('knowledgeText').value.trim();
+        const btn = document.getElementById('ingestBtn');
+        const status = document.getElementById('ingestStatus');
+
+        if (!text) return alert("请输入要录入的内容");
+
+        btn.disabled = true;
+        status.style.color = "#3498db";
+        status.innerText = "正在进行文本分块并生成向量存储...";
+
+        try {
+            const response = await fetch('/api/knowledge/async-ingest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+                body: text
+            });
+
+            if (response.ok) {
+                status.style.color = "var(--success)";
+                status.innerText = "✅ 录入成功！大模型已获得该背景知识。";
+                document.getElementById('knowledgeText').value = "";
+            } else {
+                throw new Error("服务端响应错误");
+            }
+        } catch (e) {
+            status.style.color = "#e74c3c";
+            status.innerText = "❌ 录入失败，请检查数据库连接";
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    // --- RAG 问答逻辑 ---
+    let eventSource = null;
+
+    function askQuestion() {
+        const input = document.getElementById('questionInput');
+        const question = input.value.trim();
+        const output = document.getElementById('output');
+        const cursor = document.getElementById('cursor');
+        const btn = document.getElementById('askBtn');
+
+        if (!question) return;
+
+        // 重置 UI
+        if (eventSource) eventSource.close();
+        output.innerText = "";
+        cursor.classList.add('blinking');
+        btn.disabled = true;
+
+        // 建立 SSE 连接
+        eventSource = new EventSource('/api/chat/stream?message=' + encodeURIComponent(question));
+
+        eventSource.onmessage = function(e) {
+            // Spring AI 返回的数据可能被引号包裹，根据实际情况处理
+            let content = e.data;
+            if(content === "[DONE]") { // 某些接口自定义的结束符
+                finish();
+                return;
+            }
+            output.innerText += content;
+            // 自动滚动到底部
+            const history = document.getElementById('chatHistory');
+            history.scrollTop = history.scrollHeight;
+        };
+
+        eventSource.onerror = function() {
+            finish();
+        };
+
+        function finish() {
+            if(eventSource) eventSource.close();
+            cursor.classList.remove('blinking');
+            btn.disabled = false;
+            console.log("回答结束");
+        }
+    }
+</script>
+
+</body>
+</html>
