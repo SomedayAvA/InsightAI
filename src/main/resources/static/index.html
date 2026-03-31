@@ -2,9 +2,9 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>InsightAI 智能知识库平台</title>
+    <title>InsightAI 智能知识库平台 (带权限隔离版)</title>
     <style>
-        :root { --primary: #3498db; --success: #27ae60; --bg: #f4f7f6; }
+        :root { --primary: #3498db; --success: #27ae60; --bg: #f4f7f6; --warning: #e67e22; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; }
 
         /* 布局控制 */
@@ -21,7 +21,8 @@
         .chat-history { flex: 1; background: #f9f9f9; border-radius: 8px; padding: 20px; overflow-y: auto; position: relative; margin-bottom: 20px; border: 1px solid #eee; }
 
         /* 通用组件 */
-        h2 { margin: 0 0 10px 0; color: #34495e; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+        /* 让标题栏左右两端对齐，腾出空间放下拉框 */
+        h2 { margin: 0 0 10px 0; color: #34495e; font-size: 20px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .input-group { display: flex; gap: 10px; }
         input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 6px; outline: none; }
         button { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; color: white; font-weight: bold; transition: opacity 0.3s; }
@@ -29,9 +30,13 @@
         .btn-ingest { background: var(--success); width: 100%; }
         .btn-ask { background: var(--primary); }
 
+        /*新增下拉框的样式 */
+        .role-selector { padding: 6px 10px; border-radius: 6px; border: 1px solid #bdc3c7; background: #fff; font-size: 14px; color: #2c3e50; outline: none; cursor: pointer; }
+        .role-selector:focus { border-color: var(--primary); }
+
         #output { line-height: 1.7; color: #2c3e50; white-space: pre-wrap; }
         .cursor { display: inline-block; width: 3px; height: 18px; background: var(--primary); margin-left: 3px; vertical-align: middle; visibility: hidden; }
-        .blinking { animation: blink 1s step-end infinite; visibility: visible; }
+
         @keyframes blink { 50% { opacity: 0; } }
         .status-msg { font-size: 13px; margin-top: 10px; min-height: 20px; }
     </style>
@@ -40,21 +45,35 @@
 
 <div class="container">
     <div class="panel knowledge-side">
-        <h2>📚 录入私有知识</h2>
-        <p style="font-size: 13px; color: #7f8c8d;">输入公司制度、产品文档或个人笔记，将其向量化存入 PG 数据库。</p>
-        <textarea id="knowledgeText" placeholder="例如：InsightAI 公司的加班补贴标准是每小时 50 元，需通过钉钉系统申请。"></textarea>
+        <h2>
+            <span>📚 录入私有知识</span>
+            <label for="ingestDept"></label><select id="ingestDept" class="role-selector" style="border-color: var(--success);">
+                <option value="public">🏷️ 标记为：公开资料</option>
+                <option value="hr">🏷️ 标记为：人事机密</option>
+                <option value="finance">🏷️ 标记为：财务机密</option>
+            </select>
+        </h2>
+        <p style="font-size: 13px; color: #7f8c8d;">输入公司制度、产品文档或机密数据，并为其分配数据归属权限。</p>
+        <label for="knowledgeText"></label><textarea id="knowledgeText" placeholder="例如：输入财务部 Q3 利润表，并在右上角标记为【财务机密】..."></textarea>
         <button class="btn-ingest" id="ingestBtn" onclick="ingestKnowledge()">存入向量数据库</button>
         <div id="ingestStatus" class="status-msg"></div>
     </div>
 
     <div class="panel chat-side">
-        <h2>🤖 智能 RAG 问答</h2>
+        <h2>
+            <span>🤖 智能 RAG 问答</span>
+            <label for="chatDept"></label><select id="chatDept" class="role-selector" style="border-color: var(--primary); color: var(--primary); font-weight: bold;">
+                <option value="public">👤 模拟身份：实习生 (仅公开权限)</option>
+                <option value="hr">👤 模拟身份：HR 总监 (人事权限)</option>
+                <option value="finance">👤 模拟身份：财务总监 (财务权限)</option>
+            </select>
+        </h2>
         <div class="chat-history" id="chatHistory">
             <div id="output">等待提问中...</div>
             <span id="cursor" class="cursor"></span>
         </div>
         <div class="input-group">
-            <input type="text" id="questionInput" placeholder="输入问题..." onkeypress="if(event.keyCode==13) askQuestion()">
+            <label for="questionInput"></label><input type="text" id="questionInput" placeholder="输入问题测试越权拦截..." onkeypress="if(event.keyCode===13) askQuestion()">
             <button class="btn-ask" id="askBtn" onclick="askQuestion()">发送</button>
         </div>
         <div id="chatStatus" class="status-msg"></div>
@@ -65,6 +84,7 @@
     // --- 知识录入逻辑 ---
     async function ingestKnowledge() {
         const text = document.getElementById('knowledgeText').value.trim();
+        const dept = document.getElementById('ingestDept').value; // 获取当前选择的标签
         const btn = document.getElementById('ingestBtn');
         const status = document.getElementById('ingestStatus');
 
@@ -72,10 +92,12 @@
 
         btn.disabled = true;
         status.style.color = "#3498db";
-        status.innerText = "正在进行文本分块并生成向量存储...";
+        status.innerText = `正在打上 [${dept}] 标签并存入向量库...`;
 
         try {
-            const response = await fetch('/api/knowledge/async-ingest', {
+            // 将 department 参数拼接到 URL 后面发送给后端
+            const url = `/api/knowledge/async-ingest?department=${encodeURIComponent(dept)}`;
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
                 body: text
@@ -83,7 +105,7 @@
 
             if (response.ok) {
                 status.style.color = "var(--success)";
-                status.innerText = "✅ 录入成功！大模型已获得该背景知识。";
+                status.innerText = `✅ 录入成功！该文档已被隔离保护，归属: ${dept}`;
                 document.getElementById('knowledgeText').value = "";
             } else {
                 throw new Error("服务端响应错误");
@@ -102,6 +124,7 @@
     function askQuestion() {
         const input = document.getElementById('questionInput');
         const question = input.value.trim();
+        const userDept = document.getElementById('chatDept').value; // 获取当前模拟的身份
         const output = document.getElementById('output');
         const cursor = document.getElementById('cursor');
         const btn = document.getElementById('askBtn');
@@ -114,18 +137,17 @@
         cursor.classList.add('blinking');
         btn.disabled = true;
 
-        // 建立 SSE 连接
-        eventSource = new EventSource('/api/chat/stream?message=' + encodeURIComponent(question));
+        // 建立 SSE 连接时，带上 userDept 参数供后端进行物理拦截
+        const url = `/api/chat/stream?message=${encodeURIComponent(question)}&userDept=${encodeURIComponent(userDept)}`;
+        eventSource = new EventSource(url);
 
         eventSource.onmessage = function(e) {
-            // Spring AI 返回的数据可能被引号包裹，根据实际情况处理
             let content = e.data;
-            if(content === "[DONE]") { // 某些接口自定义的结束符
+            if(content === "[DONE]") {
                 finish();
                 return;
             }
             output.innerText += content;
-            // 自动滚动到底部
             const history = document.getElementById('chatHistory');
             history.scrollTop = history.scrollHeight;
         };

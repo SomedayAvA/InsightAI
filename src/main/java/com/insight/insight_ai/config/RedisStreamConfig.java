@@ -11,6 +11,9 @@ import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 
 import java.time.Duration;
 
+/**
+ * @author someday
+ */
 @Configuration
 public class RedisStreamConfig {
 
